@@ -1,3 +1,3 @@
 fn main() {
-    rust_compilers::run_examples();
+    compiler_club::run_examples();
 }
