@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    rust_compilers::run_examples();
 }
