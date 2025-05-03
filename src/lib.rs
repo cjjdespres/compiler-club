@@ -1,6 +1,6 @@
 mod calculator;
 
-use calculator::{ast, interpreter, pretty};
+use calculator::simple::{ast, interpreter, pretty};
 
 pub fn run_examples() {
     println!("First calculator example:");
