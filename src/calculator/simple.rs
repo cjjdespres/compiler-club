@@ -118,6 +118,58 @@ pub mod lex {
         )
         .parse_next(input)
     }
+    #[cfg(test)]
+    mod tests {
+        use winnow::{combinator, error::ParseError, Parser};
+
+        use super::*;
+
+        // Mostly just for tests/showing off, because the higher-level parse
+        // module will still operate on the same str input.
+        #[derive(Clone, Debug, PartialEq)]
+        pub enum Token {
+            Add,
+            Mul,
+            Lparen,
+            Rparen,
+            Lit(i64),
+        }
+
+        pub fn tokens<'a>(input: &mut &'a str) -> Result<Vec<Token>, ParseError<&'a str, ()>> {
+            combinator::repeat(
+                0..,
+                combinator::alt((
+                    lit.map(Token::Lit),
+                    add.value(Token::Add),
+                    mul.value(Token::Mul),
+                    lparen.value(Token::Lparen),
+                    rparen.value(Token::Rparen),
+                )),
+            )
+            .parse(input)
+        }
+
+        #[test]
+        fn test_example_1() {
+            let source_str = &mut "3 * 5 + (-7 + 11) * 9";
+            assert_eq!(
+                tokens(source_str).unwrap(),
+                vec![
+                    Token::Lit(3),
+                    Token::Mul,
+                    Token::Lit(5),
+                    Token::Add,
+                    Token::Lparen,
+                    Token::Lit(-7),
+                    Token::Add,
+                    Token::Lit(11),
+                    Token::Rparen,
+                    Token::Mul,
+                    Token::Lit(9)
+                ]
+            )
+        }
+    }
 }
 
 // At this point it might be helpful to have an actual grammar in mind.
@@ -211,64 +263,16 @@ pub mod parse {
     pub fn parse<'a>(input: &mut &'a str) -> Result<Expr, ParseError<&'a str, ()>> {
         expr.parse(input)
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use winnow::{combinator, error::ParseError, Parser};
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-    use super::*;
-
-    // Mostly just for tests/showing off, because the higher-level parse
-    // module will still operate on the same str input.
-    #[derive(Clone, Debug, PartialEq)]
-    pub enum Token {
-        Add,
-        Mul,
-        Lparen,
-        Rparen,
-        Lit(i64),
-    }
-
-    pub fn tokens<'a>(input: &mut &'a str) -> Result<Vec<Token>, ParseError<&'a str, ()>> {
-        combinator::repeat(
-            0..,
-            combinator::alt((
-                lex::lit.map(Token::Lit),
-                lex::add.value(Token::Add),
-                lex::mul.value(Token::Mul),
-                lex::lparen.value(Token::Lparen),
-                lex::rparen.value(Token::Rparen),
-            )),
-        )
-        .parse(input)
-    }
-
-    #[test]
-    fn test_example_1() {
-        let source_str = &mut "3 * 5 + (-7 + 11) * 9";
-        assert_eq!(
-            tokens(source_str).unwrap(),
-            vec![
-                Token::Lit(3),
-                Token::Mul,
-                Token::Lit(5),
-                Token::Add,
-                Token::Lparen,
-                Token::Lit(-7),
-                Token::Add,
-                Token::Lit(11),
-                Token::Rparen,
-                Token::Mul,
-                Token::Lit(9)
-            ]
-        )
-    }
-
-    #[test]
-    fn test_example_2() {
-        let source_str = &mut "3 * 5 + (-7 + 11) * 9";
-        assert_eq!(parse::expr.parse(source_str).unwrap(), ast::example_1())
+        #[test]
+        fn test_example_1() {
+            let source_str = &mut "3 * 5 + (-7 + 11) * 9";
+            assert_eq!(parse::parse(source_str).unwrap(), ast::example_1())
+        }
     }
 }
 
