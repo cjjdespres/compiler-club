@@ -18,5 +18,12 @@ pub fn run_examples() {
     println!(
         "And our stack VM works too, because {} is {}",
         example_str, stack_eval
-    )
+    );
+    println!("Behold as well, the might of our stack optimizer, turning");
+    println!("  {}", pretty::print(ast::example_2()));
+    println!("into");
+    println!(
+        "  {}",
+        pretty::print(stack_vm::stack_optimize(ast::example_2()))
+    );
 }

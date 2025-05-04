@@ -23,6 +23,11 @@ pub mod ast {
     pub fn example_1() -> Expr {
         add(mul(lit(3), lit(5)), mul(add(lit(-7), lit(11)), lit(9)))
     }
+
+    // A second example for our stack optimizer
+    pub fn example_2() -> Expr {
+        add(lit(1), add(lit(2), add(lit(3), lit(4))))
+    }
 }
 
 // Start with the lexers. All of these will consume optional trailing
@@ -354,6 +359,9 @@ pub mod interpreter {
 
 // A little stack VM as a compilation target for our calculator programs
 pub mod stack_vm {
+    use std::cmp::{max, min};
+
+    use super::ast;
     use super::ast::Expr;
 
     // Our VM can:
@@ -454,10 +462,127 @@ pub mod stack_vm {
         vm.pop()
     }
 
+    // We can even write a little optimization pass for our programs. This one
+    // will operate on the Expr itself, because that's a little easier for this
+    // one.
+    //
+    // Some expressions, like 1 + (2 + (3 + 4)), take up a lot of stack space in
+    // their evaluation; that example becomes
+    //
+    // lit 1
+    // lit 2
+    // lit 3
+    // lit 4
+    // add
+    // add
+    // add
+    //
+    // and it takes up to 4 stack slots during execution. Any right-associated
+    // calculator program will exhibit this kind of stack growth. Since our
+    // integer arithmetic is commutative, we could transform this into
+    //
+    // lit 3
+    // lit 4
+    // add
+    // lit 2
+    // add
+    // lit 1
+    // add
+    //
+    // Our stack size is now 2; in fact, applying this kind of transformation to
+    // any amount of additions will result in a program that takes up at most
+    // two stack slots! One is effectively an accumulator, and one is basically
+    // just a temporary stack slot to hold an integer immediate.
+    //
+    // We'll implement it with a size-based heuristic:
+    //
+    // 1. A single literal optimizes to itself, of course.
+    //
+    // 2. An (x + y) expression will be reordered to (y + x) if it looks like y
+    //    will take up _more_ stack slots at maximum than x. Why more? One way
+    //    to think of it is in terms of "stack pressure" - when we evaluate x +
+    //    y we leave the result of evaluating x on the stack the entire time we
+    //    evaluate y. That intermediate result from evaluating the first term
+    //    adds to the pressure on the stack when we evaluate the second term. If
+    //    we can see that one of the expressions is low-pressure, we can arrange
+    //    for the intermediate result to stick around while it evaluates. That
+    //    shifts pressure from a high-pressure evaluation to a low-pressure
+    //    evaluation, and the result is a reduction in max pressure. The
+    //    max_stack function below will make this a little clearer, hopefully.
+    //
+    // This optimization will be applied recursively, of course.
+    //
+    // We could do this by reassociating the arithmetic as well. Also, if we had
+    // stack manipulation instructions in our VM then we could even implement
+    // this without needing either; with a hypothetical swap instruction we
+    // could do
+    //
+    // lit 3
+    // lit 4
+    // add
+    // lit 2
+    // swap
+    // add
+    // lit 1
+    // swap
+    // add
+    //
+    // which would compute exactly 1 + (2 + (3 + 4)), just in a different
+    // evaluation order.
+    pub fn stack_optimize(expr: Expr) -> Expr {
+        // we could be a bit cleverer, and estimate the necessary stack size at
+        // the same time we optimize the expression, but this nicely separates
+        // the two parts of the algorithm. Also I'm lazy. Also this needs to be
+        // a fn because it's recursive.
+        fn max_stack(expr: &Expr) -> i64 {
+            // If we execute x <op> y in that order, we need at least
+            // max_stack(x) to evaluate x, and at least max_stack(y) + 1 to
+            // evaluate y (because the evaluation of x needs to stick
+            // around). But, we have the power of reordering, so we need to
+            // estimate the stack size of y <op> x too, and take the minimum of
+            // those two estimates.
+
+            let max_of_binop = |x: &Expr, y: &Expr| {
+                let x_est = max_stack(x);
+                let y_est = max_stack(y);
+                let x_y_est = max(x_est, y_est + 1);
+                let y_x_est = max(y_est, x_est + 1);
+                min(x_y_est, y_x_est)
+            };
+            match expr {
+                Expr::Add(x, y) => max_of_binop(x, y),
+                Expr::Mul(x, y) => max_of_binop(x, y),
+                Expr::Lit(_) => 1,
+            }
+        }
+
+        match expr {
+            Expr::Add(x, y) => {
+                let x = stack_optimize(*x);
+                let y = stack_optimize(*y);
+                if max_stack(&y) > max_stack(&x) {
+                    ast::add(y, x)
+                } else {
+                    ast::add(x, y)
+                }
+            }
+            Expr::Mul(x, y) => {
+                let x = stack_optimize(*x);
+                let y = stack_optimize(*y);
+                if max_stack(&y) > max_stack(&x) {
+                    ast::mul(y, x)
+                } else {
+                    ast::mul(x, y)
+                }
+            }
+            Expr::Lit(_) => expr,
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::super::{ast, interpreter};
-        use super::{compile, eval, Instr};
+        use super::{compile, eval, stack_optimize, Instr};
 
         #[test]
         fn test_example_1_compiles() {
@@ -482,6 +607,17 @@ pub mod stack_vm {
             assert_eq!(
                 eval(ast::example_1()),
                 interpreter::interpret(ast::example_1())
+            )
+        }
+
+        #[test]
+        fn test_example_2_optimizes() {
+            assert_eq!(
+                stack_optimize(ast::example_2()),
+                ast::add(
+                    ast::add(ast::add(ast::lit(3), ast::lit(4)), ast::lit(2)),
+                    ast::lit(1)
+                )
             )
         }
     }
