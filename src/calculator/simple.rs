@@ -28,6 +28,11 @@ pub mod ast {
     pub fn example_2() -> Expr {
         add(lit(1), add(lit(2), add(lit(3), lit(4))))
     }
+
+    // A very simple third example
+    pub fn example_3() -> Expr {
+        add(lit(5), lit(3))
+    }
 }
 
 // Start with the lexers. All of these will consume optional trailing
@@ -335,11 +340,11 @@ pub mod pretty {
 pub mod interpreter {
     use super::ast::Expr;
 
-    pub fn interpret(expr: Expr) -> i64 {
+    pub fn interpret(expr: &Expr) -> i64 {
         match expr {
-            Expr::Add(x, y) => interpret(*x) + interpret(*y),
-            Expr::Mul(x, y) => interpret(*x) * interpret(*y),
-            Expr::Lit(x) => x,
+            Expr::Add(x, y) => interpret(x) + interpret(y),
+            Expr::Mul(x, y) => interpret(x) * interpret(y),
+            Expr::Lit(x) => *x,
         }
     }
 
@@ -350,7 +355,7 @@ pub mod interpreter {
         #[test]
         fn test_example_1() {
             assert_eq!(
-                interpret(super::super::ast::example_1()),
+                interpret(&super::super::ast::example_1()),
                 3 * 5 + (-7 + 11) * 9
             )
         }
@@ -432,32 +437,32 @@ pub mod stack_vm {
     // The result is a program that does whatever the accumulator did, then
     // additionally pushes the result of evaluating the expression onto the
     // stack.
-    fn compile_onto(expr: Expr, instrs: &mut Vec<Instr>) {
+    fn compile_onto(expr: &Expr, instrs: &mut Vec<Instr>) {
         match expr {
             Expr::Add(x, y) => {
                 // For addition, we just need a program that computes x, then
                 // computes y, then executes a single Add.
-                compile_onto(*x, instrs);
-                compile_onto(*y, instrs);
+                compile_onto(x, instrs);
+                compile_onto(y, instrs);
                 instrs.push(Instr::Add)
             }
             Expr::Mul(x, y) => {
                 // Same as Add
-                compile_onto(*x, instrs);
-                compile_onto(*y, instrs);
+                compile_onto(x, instrs);
+                compile_onto(y, instrs);
                 instrs.push(Instr::Mul)
             }
-            Expr::Lit(num) => instrs.push(Instr::Const(num)),
+            Expr::Lit(num) => instrs.push(Instr::Const(*num)),
         }
     }
 
-    pub fn compile(expr: Expr) -> Vec<Instr> {
+    pub fn compile(expr: &Expr) -> Vec<Instr> {
         let mut instrs = Vec::new();
         compile_onto(expr, &mut instrs);
         instrs
     }
 
-    pub fn eval(expr: Expr) -> i64 {
+    pub fn eval(expr: &Expr) -> i64 {
         let mut vm = execute(compile(expr));
         vm.pop()
     }
@@ -587,7 +592,7 @@ pub mod stack_vm {
         #[test]
         fn test_example_1_compiles() {
             assert_eq!(
-                compile(ast::example_1()),
+                compile(&ast::example_1()),
                 vec![
                     Instr::Const(3),
                     Instr::Const(5),
@@ -605,8 +610,8 @@ pub mod stack_vm {
         #[test]
         fn test_example_1_runs_like_interpreter() {
             assert_eq!(
-                eval(ast::example_1()),
-                interpreter::interpret(ast::example_1())
+                eval(&ast::example_1()),
+                interpreter::interpret(&ast::example_1())
             )
         }
 
@@ -618,6 +623,314 @@ pub mod stack_vm {
                     ast::add(ast::add(ast::lit(3), ast::lit(4)), ast::lit(2)),
                     ast::lit(1)
                 )
+            )
+        }
+    }
+}
+
+// Now we'll proceed to a small register-based VM. It will have a set of
+// _locations_ that hold numbers in them. Instructions operate entirely on
+// locations - they read values in source locations, perform some simple
+// operation on those values, and store the result in a destination location.
+pub mod register_vm_1 {
+    use super::ast::Expr;
+
+    // All the locations are deliberately uni-typed
+    type Loc = i64;
+
+    type SrcLoc = Loc;
+
+    type DstLoc = Loc;
+
+    #[derive(Debug, PartialEq)]
+    pub enum Instr {
+        // Add the values in the source locations and store the result in the
+        // destination location
+        Add(DstLoc, SrcLoc, SrcLoc),
+        // Multiply the values in the source locations and store the result in the
+        // destination location
+        Mul(DstLoc, SrcLoc, SrcLoc),
+        // Load the constant into the destination location
+        Imm(DstLoc, i64),
+    }
+
+    pub struct VM {
+        registers: Vec<i64>,
+    }
+
+    const MAX_LOC: Loc = 8;
+
+    impl VM {
+        pub fn new() -> Self {
+            Self {
+                // No one could ever need more than 8 locations
+                registers: vec![0; MAX_LOC as usize],
+            }
+        }
+
+        // Just like real life CPUs, if you try to execute a malformed
+        // instruction this VM simply explodes
+        fn index_from_loc(&self, loc: Loc) -> usize {
+            let idx = loc as usize;
+            if loc < 0 || idx >= self.registers.len() {
+                panic!("At the disco")
+            }
+            idx
+        }
+
+        pub fn read(&self, src: SrcLoc) -> i64 {
+            let idx = self.index_from_loc(src);
+            self.registers[idx]
+        }
+
+        pub fn write(&mut self, dst: DstLoc, val: i64) {
+            let idx = self.index_from_loc(dst);
+            self.registers[idx] = val;
+        }
+
+        pub fn execute(&mut self, instr: Instr) {
+            match instr {
+                Instr::Add(dst, x_loc, y_loc) => {
+                    let x = self.read(x_loc);
+                    let y = self.read(y_loc);
+                    self.write(dst, x + y)
+                }
+                Instr::Mul(dst, x_loc, y_loc) => {
+                    let x = self.read(x_loc);
+                    let y = self.read(y_loc);
+                    self.write(dst, x * y)
+                }
+                Instr::Imm(dst, x) => self.write(dst, x),
+            }
+        }
+
+        pub fn execute_all(instrs: Vec<Instr>) -> VM {
+            let mut vm = VM::new();
+            for instr in instrs {
+                vm.execute(instr)
+            }
+            vm
+        }
+    }
+
+    // Compilation is going to be a little more difficult with locations,
+    // because we have to keep track of the "live" locations - the locations
+    // with values in them that we need to keep around for use in other parts of
+    // the compilation. We didn't have this problem with the stack-based VM
+    // because the operation of the stack naturally gave us an isolated space in
+    // which to evaluate each expression. That's how we could create a program
+    // that evaluates two expressions X and Y simply by concatenating the
+    // programs that evaluate X and Y individually.
+    //
+    // We also have decide on a convention for "returning" the result of a
+    // program. In our stack programs, the result was naturally left at the top
+    // of the stack.
+
+    // In this first attempt, we'll obey a simple recursive code generation
+    // scheme for a given expr:
+    //
+    // 1. The first open location will always be reserved to store the
+    //    result of evaluating the expression. This solves the return
+    //    problem - the whole program will put its result in location 0.
+    //
+    // 2. A literal expression will get turned into an Imm
+    //
+    // 3. An Add or Mul expression will be compiled like it was with the
+    //    stack_vm - we'll generate a program to evaluate the first operand,
+    //    then generate a program to evaluate the second, then emit a single
+    //    Add/Mul instruction to put the final result in the return
+    //    location. The difference between this and the stack_vm is that we
+    //    now have to track free locations and return locations ourselves.
+
+    // Our code gen only needs to keep track of the next free location,
+    // since our code gen only uses locations starting at the next free
+    // location and going upward.
+    pub struct CodeGenState {
+        next_free_loc: Loc,
+    }
+
+    // While our VM still has the (perhaps temporary) luxury of exploding
+    // whenever something goes wrong, we'd rather our compiler not explode
+    // if given a difficult program.
+    #[derive(Debug, PartialEq)]
+    pub enum CodeGenError {
+        // We needed a new location, but the next free one was too big
+        RanOutOfLocations(Loc),
+    }
+
+    fn err_ran_out_of_locations<O>(loc: Loc) -> Result<O, CodeGenError> {
+        Err(CodeGenError::RanOutOfLocations(loc))
+    }
+
+    impl CodeGenState {
+        pub fn new() -> Self {
+            Self { next_free_loc: 0 }
+        }
+
+        pub fn new_loc(&mut self) -> Result<Loc, CodeGenError> {
+            let loc = self.next_free_loc;
+            if loc >= MAX_LOC {
+                err_ran_out_of_locations(loc)
+            } else {
+                self.next_free_loc += 1;
+                Ok(loc)
+            }
+        }
+
+        // We might as well implement some simple location reclamation while
+        // we're here. Our code gen only ever uses the next free location
+        // and beyond for storage, and when a program is done executing only
+        // the result location (the initial next free location) contains
+        // anything important. Thus we can safely mark everything beyond the
+        // result location as free after generating a particular program.
+        pub fn reclaim_beyond(&mut self, loc: Loc) {
+            self.next_free_loc = loc + 1;
+        }
+    }
+
+    // Compiled programs get a little more complex now, since we have to
+    // keep track of where the return location is. Well, given the code gen
+    // conventions outlied above, we could technically just read the DstLoc
+    // from the final instruction to get the return location, but that might
+    // be going a little too far.
+    #[derive(Debug, PartialEq)]
+    pub struct Program {
+        instructions: Vec<Instr>,
+        return_loc: DstLoc,
+    }
+
+    impl Program {
+        // Return a new empty program with the given return location. The
+        // result of executing it will be undefined, as we don't clear the
+        // return location by default.
+        pub fn new(return_loc: DstLoc) -> Self {
+            Self {
+                instructions: Vec::new(),
+                return_loc,
+            }
+        }
+
+        pub fn push_instr(&mut self, instr: Instr) {
+            self.instructions.push(instr)
+        }
+
+        pub fn push_instrs(&mut self, instrs: Vec<Instr>) {
+            for instr in instrs {
+                self.push_instr(instr);
+            }
+        }
+    }
+
+    fn compile_binop_for<F>(
+        codegen: &mut CodeGenState,
+        top_program: &mut Program,
+        binop_instr: F,
+        x: &Expr,
+        y: &Expr,
+    ) -> Result<(), CodeGenError>
+    where
+        F: Fn(DstLoc, SrcLoc, SrcLoc) -> Instr,
+    {
+        // Generate a program to compute x
+        let x_program = compile_expr(codegen, x)?;
+        top_program.push_instrs(x_program.instructions);
+        codegen.reclaim_beyond(x_program.return_loc);
+
+        // And one to compute y
+        let y_program = compile_expr(codegen, y)?;
+        top_program.push_instrs(y_program.instructions);
+        codegen.reclaim_beyond(y_program.return_loc);
+
+        // The overall program is one that computes x, then y, then
+        // puts the sum of those two results into the overall return
+        // location.
+        let result_instr = binop_instr(
+            top_program.return_loc,
+            x_program.return_loc,
+            y_program.return_loc,
+        );
+        top_program.push_instr(result_instr);
+        return Ok(());
+    }
+
+    pub fn compile_expr(codegen: &mut CodeGenState, expr: &Expr) -> Result<Program, CodeGenError> {
+        let return_loc = codegen.new_loc()?;
+        let mut program = Program::new(return_loc);
+
+        match expr {
+            Expr::Lit(num) => {
+                // Just load the literal into the return location
+                let lit_instr = Instr::Imm(return_loc, *num);
+                program.push_instr(lit_instr);
+            }
+            Expr::Add(x, y) => compile_binop_for(codegen, &mut program, Instr::Add, x, y)?,
+            Expr::Mul(x, y) => compile_binop_for(codegen, &mut program, Instr::Mul, x, y)?,
+        }
+
+        return Ok(program);
+    }
+
+    pub fn compile(expr: Expr) -> Result<Program, CodeGenError> {
+        let mut codegen = CodeGenState::new();
+        compile_expr(&mut codegen, &expr)
+    }
+
+    pub fn eval(expr: Expr) -> Result<i64, CodeGenError> {
+        let program = compile(expr)?;
+        let vm = VM::execute_all(program.instructions);
+        Ok(vm.read(program.return_loc))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::super::{ast, interpreter};
+        use super::*;
+
+        #[test]
+        fn example_3_compiles() {
+            assert_eq!(
+                compile(ast::example_3()),
+                Ok(Program {
+                    instructions: vec![Instr::Imm(1, 5), Instr::Imm(2, 3), Instr::Add(0, 1, 2)],
+                    return_loc: 0
+                })
+            )
+        }
+
+        #[test]
+        fn example_3_evaluates() {
+            assert_eq!(
+                eval(ast::example_3()).unwrap(),
+                interpreter::interpret(&ast::example_3())
+            )
+        }
+
+        #[test]
+        fn example_1_compiles() {
+            assert_eq!(
+                compile(ast::example_1()),
+                Ok(Program {
+                    instructions: vec![
+                        Instr::Imm(2, 3),
+                        Instr::Imm(3, 5),
+                        Instr::Mul(1, 2, 3),
+                        Instr::Imm(4, -7),
+                        Instr::Imm(5, 11),
+                        Instr::Add(3, 4, 5),
+                        Instr::Imm(4, 9),
+                        Instr::Mul(2, 3, 4),
+                        Instr::Add(0, 1, 2)
+                    ],
+                    return_loc: 0
+                })
+            )
+        }
+
+        #[test]
+        fn example_1_evaluates() {
+            assert_eq!(
+                eval(ast::example_1()).unwrap(),
+                interpreter::interpret(&ast::example_1())
             )
         }
     }
