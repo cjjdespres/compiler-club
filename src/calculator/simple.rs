@@ -3,7 +3,7 @@
 // the analogous rust thing would do".
 
 pub mod ast {
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Clone)]
     pub enum Expr {
         Add(Box<Expr>, Box<Expr>),
         Mul(Box<Expr>, Box<Expr>),
@@ -870,12 +870,12 @@ pub mod register_vm_1 {
         return Ok(program);
     }
 
-    pub fn compile(expr: Expr) -> Result<Program, CodeGenError> {
+    pub fn compile(expr: &Expr) -> Result<Program, CodeGenError> {
         let mut codegen = CodeGenState::new();
         compile_expr(&mut codegen, &expr)
     }
 
-    pub fn eval(expr: Expr) -> Result<i64, CodeGenError> {
+    pub fn eval(expr: &Expr) -> Result<i64, CodeGenError> {
         let program = compile(expr)?;
         let vm = VM::execute_all(program.instructions);
         Ok(vm.read(program.return_loc))
@@ -883,13 +883,13 @@ pub mod register_vm_1 {
 
     #[cfg(test)]
     mod tests {
-        use super::super::super::{ast, interpreter};
+        use super::super::super::{ast, interpreter, stack_vm};
         use super::*;
 
         #[test]
         fn example_3_compiles() {
             assert_eq!(
-                compile(ast::example_3()),
+                compile(&ast::example_3()),
                 Ok(Program {
                     instructions: vec![Instr::Imm(1, 5), Instr::Imm(2, 3), Instr::Add(0, 1, 2)],
                     return_loc: 0
@@ -900,7 +900,7 @@ pub mod register_vm_1 {
         #[test]
         fn example_3_evaluates() {
             assert_eq!(
-                eval(ast::example_3()).unwrap(),
+                eval(&ast::example_3()).unwrap(),
                 interpreter::interpret(&ast::example_3())
             )
         }
@@ -908,7 +908,7 @@ pub mod register_vm_1 {
         #[test]
         fn example_1_compiles() {
             assert_eq!(
-                compile(ast::example_1()),
+                compile(&ast::example_1()),
                 Ok(Program {
                     instructions: vec![
                         Instr::Imm(2, 3),
@@ -929,9 +929,67 @@ pub mod register_vm_1 {
         #[test]
         fn example_1_evaluates() {
             assert_eq!(
-                eval(ast::example_1()).unwrap(),
+                eval(&ast::example_1()).unwrap(),
                 interpreter::interpret(&ast::example_1())
             )
+        }
+
+        #[test]
+        fn pathological_example_fails() {
+            // This example illustrates the limitations of our register VM and
+            // current code gen. This is an expression that's designed to have a
+            // *lot* of intermediate products that need to be kept around.
+            let e = ast::lit(1);
+            let e = ast::add(e.clone(), e.clone());
+            let e = ast::add(e.clone(), e.clone());
+            let e = ast::add(e.clone(), e.clone());
+            let e = ast::add(e.clone(), e.clone());
+            let e = ast::add(e.clone(), e.clone());
+            // You may have noticed that we've basically treated our register VM
+            // like a stack VM for the purposes of code gen, so you might think
+            // that performing the stack optimization pass here might help.
+            let e = stack_vm::stack_optimize(e);
+            // You'd be wrong (and the stack VM wouldn't be able to handle this
+            // expression either, if it had a limit on its capacity)
+            //
+            // 1. The lowest expression layer uses 1 return - 1 location total
+            //    at maximum space usage.
+            //
+            // 2. The next layer uses 1 return, then uses 1 location to compute
+            //    the first operand, then frees all but 1, then uses 1 location
+            //    to compute the second operand. That's 3 total.
+            //
+            // 3. The next layer uses 1 return, then uses 3 locations to compute
+            //    the first operand, then frees all but 1, then uses 3 locations
+            //    to compute the second operand. That's 1 + 1 +
+            //    max_usage(previous_layer) maximum, so 5.
+            //
+            // 4. The next layer uses 1 + 1 + max_usage(previous_layer), so 7
+            //
+            // 5. The top layer tries to use 9, which is a little too much, so
+            //    code gen fails.
+            //
+            // Part of the problem is our inefficient code gen - when we compile
+            // an Add or Mul expression we always deposit the results of
+            // evaluating the subexpressions in two locations, distinct from the
+            // return location of the overall expression. Our register
+            // instructions do actually work when the DstLoc is equal to one or
+            // more of the SrcLocs, so we could instead have the first
+            // sub-expression's return location be the same as the main
+            // expression's return location in these cases. This code gen
+            // improvement (which could also be implemented as an optimization
+            // pass) would slow the growth of our location usage, and the
+            // expression above would only need 5 locations total if we
+            // implemented that. We'd even beat the stack VM, which can't (as
+            // defined) ever evaluate this pathological expression.
+            //
+            // The problem can't be solved completely, though, because we do
+            // have to keep around at least one additional intermediate product
+            // for each expression layer. (This is all still assuming we aren't
+            // allowed to do constant folding - I've been avoiding that, because
+            // it would trivialize the compilation of our simple calculator
+            // language).
+            assert_eq!(eval(&e), Err(CodeGenError::RanOutOfLocations(8)))
         }
     }
 }

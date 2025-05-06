@@ -27,6 +27,6 @@ pub fn run_examples() {
     println!(
         "Our register VM even works: {} is {}",
         pretty::print(ast::example_3()),
-        register_vm_1::eval(ast::example_3()).unwrap()
+        register_vm_1::eval(&ast::example_3()).unwrap()
     );
 }
