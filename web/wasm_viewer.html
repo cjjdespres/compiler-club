@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en-US">
+    <head>
+        <meta charset="UTF-8" />
+        <title>File(s) size</title>
+    </head>
+    <body>
+        <form name="uploadForm">
+            <div>
+                <input id="uploadInput" type="file" multiple />
+                <label for="exprEval">Expression evaluates to:</label>
+                <output id="exprEval">&lt;nothing yet&gt;</output>
+            </div>
+        </form>
+        <p>
+            You have to upload the wasm yourself because CORS sucks. Run the compiler club executable; the
+            executable to upload will be in <code>web/_build/example_expr.wasm</code>. The result of evaluating
+            the expression will be displayed next to the upload button. If you're feeling very spicy, you can
+            create your own executables and run them here - the only restriction is that they they must import
+            exactly one function (<code>console.log</code>) and they must export a function named
+            <code>expr_eval</code> that takes no arguments and outputs something convertable to text.
+        </p>
+
+        <script>
+         const uploadInput = document.getElementById("uploadInput");
+         uploadInput.addEventListener(
+             "change",
+             () => {
+                 let file = uploadInput.files[0];
+                 var importObj = {console: {
+                     log: (n) => console.log(n),
+                 }};
+                 file.arrayBuffer().then(buffer =>
+                     WebAssembly.instantiate(buffer, importObj)
+                 ).then(({module, instance}) => {
+                     document.getElementById("exprEval").textContent = instance.exports.expr_eval();
+                 }
+                 );
+
+             },
+             false,
+         );
+        </script>
+    </body>
+</html>

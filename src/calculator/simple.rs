@@ -993,3 +993,856 @@ pub mod register_vm_1 {
         }
     }
 }
+
+// Let's escalate, and implement our first real code gen target - wasm. The main
+// advantage of wasm for us here is that its binary executable format is not
+// especially complex. Also, it can be run in a browser, which is always fun.
+pub mod wasm_target {
+    // WASM is a sort of typed assembly/stack VM language, so we'll need to be
+    // able to declare the types of things in our binary:
+    #[derive(Clone)]
+    pub enum ValType {
+        NumType(NumType),
+        VecType(VecType),
+        RefType(RefType),
+    }
+
+    impl CursorWrite for ValType {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                ValType::NumType(ty) => ty.write(cursor),
+                ValType::VecType(ty) => ty.write(cursor),
+                ValType::RefType(ty) => ty.write(cursor),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    pub enum RefType {
+        FuncRef,
+        ExternRef,
+    }
+
+    impl CursorWrite for RefType {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                RefType::FuncRef => wasm_byte(0x70).write(cursor),
+                RefType::ExternRef => wasm_byte(0x6F).write(cursor),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    pub enum NumType {
+        I32,
+        I64,
+        F32,
+        F64,
+    }
+
+    impl CursorWrite for NumType {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                NumType::I32 => wasm_byte(0x7F).write(cursor),
+                NumType::I64 => wasm_byte(0x7E).write(cursor),
+                NumType::F32 => wasm_byte(0x7D).write(cursor),
+                NumType::F64 => wasm_byte(0x7C).write(cursor),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    pub enum VecType {
+        V128,
+    }
+
+    impl CursorWrite for VecType {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                VecType::V128 => wasm_byte(0x7B).write(cursor),
+            }
+        }
+    }
+
+    // The type of input or output of a wasm function type or instruction
+    type ResultType = Vec<ValType>;
+
+    // A function type is thus ResultType -> ResultType
+    pub struct FuncType {
+        pub input: ResultType,
+        pub output: ResultType,
+    }
+
+    impl CursorWrite for FuncType {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            wasm_byte(0x60).write(cursor);
+            self.input.write(cursor);
+            self.output.write(cursor);
+        }
+    }
+
+    // An index into the type array of a module
+    type TypeIdx = u32;
+
+    // An index into the function array of a module - note that imports come
+    // first!
+    type FuncIdx = u32;
+
+    // An actual function has a type declaration (stored separately in the
+    // module and referenced by index), a declaration of mutable local
+    // variables, and the actual function body. Note that the locals are
+    // distinct from the function parameters; the parameters (their number and
+    // type) are defined by the input ResultType of the function, and the locals
+    // are additional variables available during function execution. The
+    // parameters (which are also mutable) are referenced by index in the body,
+    // starting at 0, and the locals are also referenced by index, starting at
+    // the next available index after the parameters.
+    pub struct Func {
+        pub typ: TypeIdx,
+        pub locals: ResultType,
+        pub body: Expr,
+    }
+
+    // TODO: consider the organization of the function types here, since the
+    // binary representation stores the type declarations in a separate place
+    // from the body.
+    pub struct FuncBody<'a> {
+        locals: Vec<LocalVar>,
+        body: &'a Expr,
+    }
+
+    impl<'a> CursorWrite for FuncBody<'a> {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            let body_size =
+                CountCursor::binary_size(&self.locals) + CountCursor::binary_size(self.body);
+            body_size.into_leb128().write(cursor);
+            self.locals.write(cursor);
+            self.body.write(cursor);
+        }
+    }
+
+    pub fn func_body<'a>(f: &'a Func) -> FuncBody<'a> {
+        // TODO: actually compress...
+        let locals = (&f.locals)
+            .into_iter()
+            .map(|t| LocalVar {
+                count: 1.into_leb128(),
+                typ: t.clone(),
+            })
+            .collect();
+        FuncBody {
+            locals,
+            body: &f.body,
+        }
+    }
+
+    pub struct LocalVar {
+        count: Leb128<u32>,
+        typ: ValType,
+    }
+
+    impl CursorWrite for LocalVar {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.count.write(cursor);
+            self.typ.write(cursor);
+        }
+    }
+
+    // An expression is just a vector of instructions
+    pub struct Expr(pub Vec<Instr>);
+
+    impl CursorWrite for Expr {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            for item in &self.0 {
+                item.write(cursor)
+            }
+            wasm_byte(0x0B).write(cursor);
+        }
+    }
+
+    // A wasm "uninterpreted" 64-bit integer
+    pub struct Uint64(pub i64);
+
+    impl CursorWrite for Uint64 {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.0.into_leb128().write(cursor)
+        }
+    }
+
+    // I'm definitely not going to implement all of these - we need very few of
+    // them for this initial simple calculator. I'm also not that interested in
+    // preserving their classification in the standard (numeric, control).
+    pub enum Instr {
+        // Return the specified constant. Although the syntax in the spec does
+        // say that this instruction takes a u64, and even that uninterpreted
+        // integers are represented as u64, nevertheless the *binary*
+        // representation of i64.const instruction has the constant be encoded
+        // using *signed* LEB128. Thus this also takes i64, just to save me some
+        // hassle and to match the ast::Expr.
+        ConstI64(i64),
+        // Pop two operands from the stack and push their sum
+        AddI64,
+        // Pop two operands from the stack and push their product
+        MulI64,
+        // Call the function at that index
+        Call(FuncIdx),
+    }
+
+    impl CursorWrite for Instr {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                Instr::ConstI64(n) => {
+                    wasm_byte(0x42).write(cursor);
+                    n.into_leb128().write(cursor)
+                }
+                Instr::AddI64 => {
+                    wasm_byte(0x7C).write(cursor);
+                }
+                Instr::MulI64 => {
+                    wasm_byte(0x7E).write(cursor);
+                }
+                Instr::Call(idx) => {
+                    wasm_byte(0x10).write(cursor);
+                    idx.into_leb128().write(cursor);
+                }
+            }
+        }
+    }
+
+    pub struct Import {
+        pub module_name: String,
+        pub name: String,
+        pub desc: ImportDesc,
+    }
+
+    impl CursorWrite for Import {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.module_name.write(cursor);
+            self.name.write(cursor);
+            self.desc.write(cursor);
+        }
+    }
+
+    pub enum ImportDesc {
+        Func(TypeIdx),
+    }
+
+    impl CursorWrite for ImportDesc {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                ImportDesc::Func(idx) => {
+                    wasm_byte(0x00).write(cursor);
+                    idx.into_leb128().write(cursor)
+                }
+            }
+        }
+    }
+
+    pub struct Export {
+        pub name: String,
+        pub desc: ExportDesc,
+    }
+
+    impl CursorWrite for Export {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.name.write(cursor);
+            self.desc.write(cursor);
+        }
+    }
+
+    pub enum ExportDesc {
+        Func(TypeIdx),
+    }
+
+    impl CursorWrite for ExportDesc {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            match self {
+                ExportDesc::Func(idx) => {
+                    wasm_byte(0x00).write(cursor);
+                    idx.into_leb128().write(cursor)
+                }
+            }
+        }
+    }
+
+    // WASM executables are called "modules" in the spec. We won't need the full
+    // capabilities of modules for our simple calculator; all we want is to be
+    // able to evaluate arithmetic expressions, and then probably print the
+    // result to console. All we need for that is a declaration of the type of a
+    // "run_expr" function (unit -> unit), an implementation of that run_expr
+    // function (which will do the arithmetic we want and print to console), and
+    // then an export declaration for that run_expr function.
+    //
+    // Having said that we don't need the full capabilities of modules, I'm
+    // still going to implement some unnecessary stuff, as you will see.
+    pub struct Module {
+        pub types: Vec<FuncType>,
+        pub imports: Vec<Import>,
+        pub funcs: Vec<Func>,
+        pub exports: Vec<Export>,
+        pub start: Option<FuncIdx>,
+    }
+
+    pub struct Magic;
+
+    impl CursorWrite for Magic {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            const MAGIC: &[u8] = b"\x00\x61\x73\x6D";
+            cursor.puts(MAGIC)
+        }
+    }
+
+    pub struct Version;
+
+    impl CursorWrite for Version {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            const VERSION: &[u8] = b"\x01\x00\x00\x00";
+            cursor.puts(VERSION)
+        }
+    }
+
+    pub enum SectionID {
+        Type,     // ID 1
+        Import,   // ID 2
+        Function, // ID 3
+        Export,   // ID 7
+        Start,    // ID 8
+        Code,     // ID 10
+    }
+
+    impl CursorWrite for SectionID {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            let byte: u8 = match self {
+                SectionID::Type => 1,
+                SectionID::Import => 2,
+                SectionID::Function => 3,
+                SectionID::Export => 7,
+                SectionID::Start => 8,
+                SectionID::Code => 10,
+            };
+            wasm_byte(byte).write(cursor)
+        }
+    }
+
+    pub struct SectionHeader {
+        id: SectionID,
+        size: Leb128<u32>,
+    }
+
+    impl CursorWrite for SectionHeader {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.id.write(cursor);
+            self.size.write(cursor);
+        }
+    }
+
+    // TODO: I'm adding the & to the vec here so I can borrow the various Vecs
+    // in the Module, but it does feel like there should be a better design
+    pub struct Section<'a, T> {
+        header: SectionHeader,
+        items: &'a T,
+    }
+
+    pub fn as_section<T>(items: &T, id: SectionID) -> Section<T>
+    where
+        T: CursorWrite,
+    {
+        Section {
+            header: SectionHeader {
+                id,
+                size: CountCursor::binary_size(items).into_leb128(),
+            },
+            items,
+        }
+    }
+
+    impl<'a, T> CursorWrite for Section<'a, T>
+    where
+        T: CursorWrite,
+    {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            self.header.write(cursor);
+            self.items.write(cursor)
+        }
+    }
+
+    pub trait HasLebRep
+    where
+        Self: Sized,
+    {
+        // Grab lowest 7 bits of self as u8, and return the remainder if
+        // non-zero
+        fn pop_chunk(self) -> (u8, Option<Self>);
+    }
+
+    impl HasLebRep for u32 {
+        fn pop_chunk(self) -> (u8, Option<Self>) {
+            let rem = self >> 7;
+            let chunk = (self & 0b1111111) as u8;
+            if rem == 0 {
+                (chunk, None)
+            } else {
+                (chunk, Some(rem))
+            }
+        }
+    }
+
+    impl HasLebRep for u64 {
+        fn pop_chunk(self) -> (u8, Option<Self>) {
+            let rem = self >> 7;
+            let chunk = (self & 0b1111111) as u8;
+            if rem == 0 {
+                (chunk, None)
+            } else {
+                (chunk, Some(rem))
+            }
+        }
+    }
+
+    impl HasLebRep for i64 {
+        fn pop_chunk(self) -> (u8, Option<Self>) {
+            // it's important to note that rust does arithmetic and not logical
+            // shift for signed integers!
+            let rem = self >> 7;
+            let chunk = (self & 0b1111111) as u8;
+            let chunk_sign_set = (chunk & 0x40) == 0x40;
+            if (rem == 0 && !chunk_sign_set) || (rem == -1 && chunk_sign_set) {
+                (chunk, None)
+            } else {
+                (chunk, Some(rem))
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Leb128<N>(N)
+    where
+        N: HasLebRep;
+
+    impl<N> CursorWrite for Leb128<N>
+    where
+        N: HasLebRep + Copy,
+    {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            cursor.put_iter(LebRemainder { num: Some(self.0) })
+        }
+    }
+
+    pub trait IntoLeb128 {
+        fn into_leb128(self) -> Leb128<Self>
+        where
+            Self: HasLebRep,
+        {
+            Leb128(self)
+        }
+    }
+
+    impl<N> IntoLeb128 for N where N: HasLebRep {}
+
+    pub struct LebRemainder<N> {
+        num: Option<N>,
+    }
+
+    impl<N> Iterator for LebRemainder<N>
+    where
+        N: HasLebRep + Copy,
+    {
+        type Item = u8;
+
+        fn next(&mut self) -> Option<u8> {
+            let num = self.num?;
+            let (chunk, remainder) = num.pop_chunk();
+
+            self.num = remainder;
+
+            let set_bit: u8 = if let None = remainder {
+                0b00000000
+            } else {
+                0b10000000
+            };
+            let chunk = chunk | set_bit;
+
+            Some(chunk)
+        }
+    }
+
+    pub trait Cursor {
+        fn puts(&mut self, bytes: &[u8]);
+
+        fn put(&mut self, byte: u8);
+
+        fn put_iter<F>(&mut self, iter: F)
+        where
+            F: IntoIterator<Item = u8>;
+    }
+
+    pub trait CursorWrite {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor;
+    }
+
+    pub struct WasmByte(u8);
+
+    impl CursorWrite for WasmByte {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            cursor.put(self.0)
+        }
+    }
+
+    pub fn wasm_byte(n: u8) -> WasmByte {
+        WasmByte(n)
+    }
+
+    impl CursorWrite for String {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            let bytes = self.as_bytes();
+            // TODO: error handling
+            let bytes_len = bytes.len() as u32;
+
+            bytes_len.into_leb128().write(cursor);
+            cursor.puts(bytes);
+        }
+    }
+
+    // TODO: here, might want to have an impl for Iterator or IntoIterator of
+    // CursorWrite items instead of just Vec, especially to be able to, say, map
+    // over streams of items. Though we do need to know the number of items in
+    // the iterator at some point!
+    impl<T> CursorWrite for Vec<T>
+    where
+        T: CursorWrite,
+    {
+        fn write<Curs>(&self, cursor: &mut Curs)
+        where
+            Curs: Cursor,
+        {
+            // TODO: error handling
+            let len = self.len() as u32;
+            len.into_leb128().write(cursor);
+            for item in self {
+                item.write(cursor)
+            }
+        }
+    }
+
+    // We could try to be more efficient and do an initial pass to size the
+    // buffer correctly, but I'd rather not think about that right now.
+    pub struct BinaryCursor {
+        cursor: Vec<u8>,
+    }
+
+    impl Cursor for BinaryCursor {
+        fn puts(&mut self, bytes: &[u8]) {
+            self.cursor.extend(bytes)
+        }
+
+        fn put(&mut self, byte: u8) {
+            self.cursor.push(byte)
+        }
+
+        fn put_iter<F>(&mut self, iter: F)
+        where
+            F: IntoIterator<Item = u8>,
+        {
+            self.cursor.extend(iter)
+        }
+    }
+
+    impl BinaryCursor {
+        pub fn new() -> Self {
+            Self { cursor: Vec::new() }
+        }
+
+        pub fn to_bytes(self) -> Vec<u8> {
+            self.cursor
+        }
+    }
+
+    // TODO: now that we have this, we could do a pass that transforms a regular
+    // module to a module that's decorated with size information.
+    pub struct CountCursor {
+        byte_count: u32,
+    }
+
+    // TODO: should probably do some usize/u32 checking...
+    impl Cursor for CountCursor {
+        fn puts(&mut self, bytes: &[u8]) {
+            let len = bytes.len() as u32;
+            self.byte_count += len
+        }
+
+        fn put(&mut self, _byte: u8) {
+            self.byte_count += 1
+        }
+
+        fn put_iter<F>(&mut self, iter: F)
+        where
+            F: IntoIterator<Item = u8>,
+        {
+            for _i in iter {
+                self.byte_count += 1
+            }
+        }
+    }
+
+    impl CountCursor {
+        pub fn new() -> Self {
+            Self { byte_count: 0 }
+        }
+
+        pub fn binary_size<T>(t: &T) -> u32
+        where
+            T: CursorWrite,
+        {
+            let mut cursor = CountCursor::new();
+            t.write(&mut cursor);
+            cursor.byte_count
+        }
+    }
+
+    impl Module {
+        pub fn to_bytes(&self) -> Vec<u8> {
+            let mut cursor = BinaryCursor::new();
+            {
+                let cursor = &mut cursor;
+
+                Magic.write(cursor);
+                Version.write(cursor);
+
+                // Type section
+                if !self.types.is_empty() {
+                    as_section(&self.types, SectionID::Type).write(cursor);
+                }
+
+                if !self.imports.is_empty() {
+                    as_section(&self.imports, SectionID::Import).write(cursor);
+                }
+
+                // Function section - the vector of type indices in the
+                // functions. Probably a better way to do this.
+                if !self.funcs.is_empty() {
+                    let func_types: Vec<_> = (&self.funcs)
+                        .into_iter()
+                        .map(|x| x.typ.into_leb128())
+                        .collect();
+                    as_section(&func_types, SectionID::Function).write(cursor);
+                }
+
+                if !self.exports.is_empty() {
+                    as_section(&self.exports, SectionID::Export).write(cursor);
+                }
+
+                // Start section
+                if let Some(funcidx) = self.start {
+                    as_section(&funcidx.into_leb128(), SectionID::Start).write(cursor);
+                }
+
+                // Code section
+                if !self.funcs.is_empty() {
+                    let func_bodies: Vec<_> = (&self.funcs).into_iter().map(func_body).collect();
+                    as_section(&func_bodies, SectionID::Code).write(cursor);
+                }
+            }
+            cursor.to_bytes()
+        }
+    }
+}
+
+// Okay, we can actually compile to wasm now. As a temporary measure, we'll
+// compile our expressions to wasm binary modules that export a function that
+// evaluate their respective expressions, then print the result with
+// console.log.
+pub mod wasm_compile {
+    use super::ast;
+    use super::wasm_target;
+
+    pub mod codegen {
+        use super::ast;
+        use super::wasm_target;
+
+        // Observe that this is almost exactly stack_vm::compile_onto
+        fn expression_onto(expr: &ast::Expr, instrs: &mut Vec<wasm_target::Instr>) {
+            match expr {
+                ast::Expr::Add(x, y) => {
+                    // For addition, we just need a program that computes x, then
+                    // computes y, then executes a single Add.
+                    expression_onto(x, instrs);
+                    expression_onto(y, instrs);
+                    instrs.push(wasm_target::Instr::AddI64)
+                }
+                ast::Expr::Mul(x, y) => {
+                    // Same as Add
+                    expression_onto(x, instrs);
+                    expression_onto(y, instrs);
+                    instrs.push(wasm_target::Instr::MulI64)
+                }
+                ast::Expr::Lit(num) => instrs.push(wasm_target::Instr::ConstI64(*num)),
+            }
+        }
+
+        pub fn expression_eval(expr: &ast::Expr) -> wasm_target::Func {
+            let mut instrs = Vec::new();
+            expression_onto(expr, &mut instrs);
+            wasm_target::Func {
+                // We're only going to have the one expr function, which comes
+                // immediately after the one and only import
+                typ: 1,
+                locals: vec![],
+                body: wasm_target::Expr(instrs),
+            }
+        }
+
+        // TODO: this is obviously terrible - just call expression_eval now that
+        // we have it, and then call console.log. Stupid.
+        pub fn expression_run(expr: &ast::Expr) -> wasm_target::Func {
+            let mut func = expression_eval(expr);
+            // Write the instruction that actually logs the result - we require that
+            // console.log be the first (and only) import.
+            let print_instr = wasm_target::Instr::Call(0);
+            func.body.0.push(print_instr);
+            // This is our second function
+            func.typ = 2;
+            func
+        }
+    }
+
+    // The ingredients of our module:
+    // 1. Type of console.log
+    // 2. Type of the function computing our expression
+    // 3. Declaration of console.log import
+    // 4. Function that computes our expression
+    // 5. Declaration of our expression computation/display function
+    pub fn compile(expr: &ast::Expr) -> wasm_target::Module {
+        // TODO: having a wasm module builder would be nice right about now.
+
+        let expr_func_run_typ = wasm_target::FuncType {
+            input: vec![],
+            output: vec![],
+        };
+
+        let expr_func_eval_typ = wasm_target::FuncType {
+            input: vec![],
+            output: vec![wasm_target::ValType::NumType(wasm_target::NumType::I64)],
+        };
+
+        // I think this has to be type-constrained?
+        let console_log_typ = wasm_target::FuncType {
+            input: vec![wasm_target::ValType::NumType(wasm_target::NumType::I64)],
+            output: vec![],
+        };
+
+        // Console log type comes first because it's an import
+        let types = vec![console_log_typ, expr_func_eval_typ, expr_func_run_typ];
+
+        let console_log_import = wasm_target::Import {
+            module_name: "console".to_string(),
+            name: "log".to_string(),
+            // First import, so its type index is 0
+            desc: wasm_target::ImportDesc::Func(0),
+        };
+
+        // Only the one import
+        let imports = vec![console_log_import];
+
+        // Compile the expression itself
+        let expr_func_eval = codegen::expression_eval(expr);
+        let expr_func_run = codegen::expression_run(expr);
+
+        // Only the one function
+        let funcs = vec![expr_func_eval, expr_func_run];
+
+        // We don't need a start function
+        let start = Option::None;
+
+        let expr_func_eval_export = wasm_target::Export {
+            name: "expr_eval".to_string(),
+            desc: wasm_target::ExportDesc::Func(1),
+        };
+
+        let expr_func_run_export = wasm_target::Export {
+            name: "expr_run".to_string(),
+            desc: wasm_target::ExportDesc::Func(2),
+        };
+
+        let exports = vec![expr_func_eval_export, expr_func_run_export];
+
+        wasm_target::Module {
+            types,
+            imports,
+            funcs,
+            exports,
+            start,
+        }
+    }
+
+    pub fn compile_binary(expr: &ast::Expr) -> Vec<u8> {
+        compile(expr).to_bytes()
+    }
+}

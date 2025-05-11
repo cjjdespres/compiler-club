@@ -1,6 +1,8 @@
 mod simple;
 
-use simple::{ast, interpreter, parse, pretty, register_vm_1, stack_vm};
+use simple::{ast, interpreter, parse, pretty, register_vm_1, stack_vm, wasm_compile};
+
+use std::{fs, io::Write};
 
 pub fn run_examples() {
     println!("First calculator example:");
@@ -29,4 +31,10 @@ pub fn run_examples() {
         pretty::print(ast::example_3()),
         register_vm_1::eval(&ast::example_3()).unwrap()
     );
+    println!("We can generate wasm too! Check out ./web/_build/example_expr.wasm");
+    // If there's an error, there's an error
+    let _ = fs::create_dir("web/_build");
+    let _ = fs::remove_file("web/_build/example_expr.wasm");
+    let mut file = fs::File::create("web/_build/example_expr.wasm").unwrap();
+    let _ = file.write_all(&wasm_compile::compile_binary(&ast::example_1()));
 }
