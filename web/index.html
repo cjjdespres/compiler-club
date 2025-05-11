@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8" />
+    <title>WASM Expression Eval</title>
+</head>
+<body>
+<label for="exprEval">Expression evaluates to:</label>
+<output id="exprEval">&lt;loading...&gt;</output>
+
+<p>
+    This page automatically loads <code>_build/example_expr.wasm</code>. That file must export a function named
+    <code>expr_eval</code> and import exactly one function: <code>console.log</code>. The result of calling
+    <code>expr_eval()</code> will be displayed above.
+</p>
+
+<script>
+    const importObj = {
+        console: {
+            log: (n) => console.log(n),
+        },
+    };
+
+    fetch("_build/example_expr.wasm")
+        .then((res) => {
+            if (!res.ok) throw new Error(`Failed to load wasm: ${res.statusText}`);
+            return res.arrayBuffer();
+        })
+        .then((buffer) => WebAssembly.instantiate(buffer, importObj))
+        .then(({ instance }) => {
+            const result = instance.exports.expr_eval();
+            document.getElementById("exprEval").textContent = result;
+        })
+        .catch((err) => {
+            console.error(err);
+            document.getElementById("exprEval").textContent = `Error: ${err.message}`;
+        });
+</script>
+</body>
+</html>
