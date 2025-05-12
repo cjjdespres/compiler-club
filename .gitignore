@@ -2,3 +2,5 @@
 /.direnv
 /.envrc
 /web/_build
+/.idea
+.DS_Store
