@@ -1,40 +1,197 @@
 <!doctype html>
 <html lang="en-US">
+
 <head>
     <meta charset="UTF-8" />
-    <title>WASM Expression Eval</title>
+    <title>🌸 Compilers Club WASM Demo 🌸</title>
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+Paaji+2&family=Fredoka+One&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --pink: #ffb6c1;
+            --light-pink: #ffe4e8;
+            --lavender: #f3e8ff;
+            --yellow: #fff9c4;
+            --mint: #d1f7f2;
+            --shadow: rgba(0, 0, 0, 0.08);
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            font-family: 'Baloo Paaji 2', cursive;
+            background: linear-gradient(135deg, var(--light-pink), var(--lavender));
+            overflow-x: hidden
+        }
+
+        h1 {
+            font-family: 'Fredoka One', cursive;
+            font-size: 3.2rem;
+            margin: 1.2rem 0 .3rem;
+            color: #d6336c;
+            text-shadow: 2px 2px var(--shadow)
+        }
+
+        .badge {
+            font-size: 1.8rem;
+            margin-bottom: .8rem;
+            animation: bounce 2.5s infinite
+        }
+
+        @keyframes bounce {
+
+            0%,
+            100% {
+                transform: translateY(0)
+            }
+
+            50% {
+                transform: translateY(-8px)
+            }
+        }
+
+        label {
+            font-size: 1.3rem
+        }
+
+        #exprEval {
+            display: inline-block;
+            min-width: 8ch;
+            margin-top: .7rem;
+            padding: .6rem 1.2rem;
+            font-size: 2.2rem;
+            color: #d6336c;
+            background: var(--yellow);
+            border: 4px dotted var(--pink);
+            border-radius: 14px;
+            box-shadow: 2px 4px 6px var(--shadow)
+        }
+
+        p {
+            font-size: 1.1rem;
+            max-width: 650px;
+            margin: 1.5rem auto;
+            background: rgba(255, 255, 255, .75);
+            padding: 1rem 1.4rem;
+            border-radius: 18px;
+            box-shadow: 0 3px 8px var(--shadow);
+            line-height: 1.5
+        }
+
+        code {
+            background: var(--mint);
+            padding: .25rem .5rem;
+            border-radius: 6px;
+            font-size: .9rem
+        }
+
+        /* floating kawaii emojis */
+        .kawaii-container {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: -1
+        }
+
+        .kawaii {
+            position: absolute;
+            bottom: -60px;
+            animation: kawaiiRise 10s linear infinite;
+            opacity: .9;
+            will-change: transform
+        }
+
+        @keyframes kawaiiRise {
+            0% {
+                transform: translateX(0) translateY(0) rotate(0deg);
+                opacity: .9
+            }
+
+            100% {
+                transform: translateX(var(--tx)) translateY(-120vh) rotate(360deg);
+                opacity: 0
+            }
+        }
+
+        /* stars */
+        .star {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 6px #fff;
+            animation: twinkle 2s infinite ease-in-out
+        }
+
+        @keyframes twinkle {
+
+            0%,
+            100% {
+                opacity: .2;
+                transform: scale(.8)
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.2)
+            }
+        }
+    </style>
 </head>
+
 <body>
-<label for="exprEval">Expression evaluates to:</label>
-<output id="exprEval">&lt;loading...&gt;</output>
+    <div class="kawaii-container" id="kawaiiContainer"></div>
+    <div class="star" style="top:10%;left:20%;animation-delay:.2s"></div>
+    <div class="star" style="top:40%;left:80%;animation-delay:.6s"></div>
+    <div class="star" style="top:70%;left:30%;animation-delay:1.1s"></div>
 
-<p>
-    This page automatically loads <code>_build/example_expr.wasm</code>. That file must export a function named
-    <code>expr_eval</code> and import exactly one function: <code>console.log</code>. The result of calling
-    <code>expr_eval()</code> will be displayed above.
-</p>
+    <h1>🌈 Ultra‑Kawaii WASM Eval 🌈</h1>
+    <div class="badge">(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧</div>
 
-<script>
-    const importObj = {
-        console: {
-            log: (n) => console.log(n),
-        },
-    };
+    <label for="exprEval">✨ Expression evaluates to: ✨</label><br />
+    <output id="exprEval">loading…</output>
 
-    fetch("_build/example_expr.wasm")
-        .then((res) => {
-            if (!res.ok) throw new Error(`Failed to load wasm: ${res.statusText}`);
-            return res.arrayBuffer();
-        })
-        .then((buffer) => WebAssembly.instantiate(buffer, importObj))
-        .then(({ instance }) => {
-            const result = instance.exports.expr_eval();
-            document.getElementById("exprEval").textContent = result;
-        })
-        .catch((err) => {
-            console.error(err);
-            document.getElementById("exprEval").textContent = `Error: ${err.message}`;
-        });
-</script>
+    <p>
+        This extremely kawaiit page auto‑loads <code>_build/example_expr.wasm</code> and calls <code>expr_eval()</code> 🌸.<br>
+        Make sure your module exports it and imports only <code>console.log</code>.
+    </p>
+
+    <script>
+        /* floating kawaii generator */
+        const kawaiiContainer = document.getElementById("kawaiiContainer");
+        const kawaiiEmoji = ["🧁", "🍡", "🍬", "🎀", "✨"];
+        const createKawaii = () => {
+            const span = document.createElement("span");
+            span.className = "kawaii";
+            span.textContent = kawaiiEmoji[Math.floor(Math.random() * kawaiiEmoji.length)];
+            const size = Math.random() * 24 + 16; // 16–40px
+            span.style.fontSize = size + "px";
+            span.style.left = Math.random() * 100 + "vw";
+            span.style.setProperty('--tx', (Math.random() * 200 - 100) + 'vw');
+            span.style.animationDuration = 8 + Math.random() * 4 + 's';
+            kawaiiContainer.appendChild(span);
+            setTimeout(() => span.remove(), 12000);
+        };
+        setInterval(createKawaii, 600);
+
+        /* wasm loader */
+        const importObj = { console: { log: n => console.log("🌸", n) } };
+        fetch("_build/example_expr.wasm")
+            .then(res => { if (!res.ok) throw new Error("failed to fetch wasm"); return res.arrayBuffer(); })
+            .then(buf => WebAssembly.instantiate(buf, importObj))
+            .then(({ instance }) => { document.getElementById("exprEval").textContent = instance.exports.expr_eval() + " ✨"; })
+            .catch(err => { console.error(err); document.getElementById("exprEval").textContent = "Error ✖"; });
+    </script>
 </body>
+
 </html>
