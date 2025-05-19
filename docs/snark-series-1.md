@@ -15,13 +15,18 @@ status: |
 > statements are true. These statements will typically be assertions that
 > certain computations were performed correctly, and for reasons of efficiency
 > the arguments will be probabilistic, so our checking procedures will have
-> (very, very tiny) rates of false positives and negatives.
+> (very, very tiny) rates of false positives and negatives. My focus will be on
+> those systems related to folding schemes; that subject is new, under heavy
+> research, and depends on a lot of prior work in the field, so I have been
+> finding it difficult to understand them in all their minute detail. I hope
+> that writing these articles will clarify at least my own thinking on the
+> subject.
 >
-> My focus will be on those systems related to folding schemes; that subject is
-> new, under heavy research, and depends on a lot of prior work in the field, so
-> I have been finding it difficult to understand them in all their minute
-> detail. I hope that writing these articles will clarify at least my own
-> thinking on the subject.
+> This first article sketches some of the things these proof systems can do,
+> without getting into how they do them. My intent is to provide a good, if
+> vague, overview of the different components of these systems, without
+> distracting implementation details. Subsequent articles will work through
+> these details.
 
 :::
 
