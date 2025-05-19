@@ -131,13 +131,13 @@ fn test'(p: u64, q: u64) -> Result<bool, ()> {
 ```
 
 This `test'` receives its primes as inputs, rather than hard-coding specific
-values for them. These inputs will both be considered non-deterministic, so it
-will be Prover's responsibility for providing them. That's why the very first
-thing we do in the test is to check to make sure the inputs are actually primes
-of the size we want---we need to prevent Prover from deceiving us with bad test
-inputs. Our other modification is to the return type, because we need to
-distinguish between test setup failures (caused by bad inputs) and actual test
-failures (caused by our code being buggy).
+values for them. These inputs will both be considered non-deterministic as well,
+so it will be Prover's responsibility for providing them. That's why the very
+first thing we do in the test is to check to make sure the inputs are actually
+primes of the size we want---we need to prevent Prover from deceiving us with
+bad test inputs. Our other modification is to the return type, because we need
+to distinguish between test setup failures (caused by bad inputs) and actual
+test failures (caused by our code being buggy).
 
 If we (somehow) make this function verifiable[^on-subtlety] we'll get
 
