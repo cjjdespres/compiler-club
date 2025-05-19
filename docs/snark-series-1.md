@@ -150,15 +150,14 @@ If we (somehow) make this function verifiable[^on-subtlety] we'll get
 fn ver_test'(p: u64, q: u64) -> (Result<bool, ()>, Prf_test)
 ```
 
-The verifiable version of `test'` computes the output `y = factor_test'(p, q)`
-of that function, and also outputs a proof `pi : Prf_test` that this result `y`
-is correct. But, what does "correct" mean? In the previous section we said that
-the `pi: Prf_factor` would establish that `y = factor(x)`. Here, we never see
-inputs `p` and `q`, so we can hardly say that the statement is that `y = test(p,
-q)`. Instead, the best we can do is the statement "there exist values `p` and
-`q` for which `y = factor_test'(p, q)`". But this statement is enough! Once
-we've established that it is true, we can look at the `y` and see how the test
-turned out:
+The verifiable version of `test'` computes the output `y = test'(p, q)` of that
+function, and also outputs a proof `pi : Prf_test` that this result `y` is
+correct. But, what does "correct" mean? In the previous section we said that the
+`pi: Prf_factor` would establish that `y = factor(x)`. Here, we never see inputs
+`p` and `q`, so we can hardly say that the statement is that `y = test(p, q)`.
+Instead, the best we can do is the statement "there exist values `p` and `q` for
+which `y = test'(p, q)`". But this statement is enough! Once we've established
+that it is true, we can look at the `y` and see how the test turned out:
 
 1. If `y` is `Err(false)`, then Prover tried to deceive us with bad test inputs
    and got caught[^on-reality]
