@@ -75,7 +75,7 @@ Logic programming languages like Prolog have a particular notion of
 *non-determinism* that they like to use, one that will be convenient for us to
 add to the model of verifiable computing that we are developing. This kind of
 non-determinism is not necessarily related to randomness; instead, it expresses
-the demands we might make at certain points in a computation that a value be
+the demand we might make at certain points in a computation that a value be
 given to us from some outside source, rather than be computed by us.[^on-logic]
 
 In our systems, non-determinism will be modelled by having our functions take
