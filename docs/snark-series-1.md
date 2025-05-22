@@ -231,8 +231,8 @@ fn vbl_test_2(p: u64, q: u64) -> (Result<bool, ()>, Prf_test_2)
 ```
 
 [^on-subtlety]:
-   Just add non-determinism to the list of language constructs we should feel at
-   least a little bad about using without justification
+    Just add non-determinism to the list of language constructs we should feel
+    at least a little bad about using without justification
 
 The verifiable version of `test_2` computes the output `y = test_2(p, q)` of
 that function, and also outputs a proof `pi : Prf_test_2` that this result `y`
