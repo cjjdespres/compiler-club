@@ -183,6 +183,20 @@ function. (These could be trivial conditions - you might actually want them to
 be trivial if the structure of the surrounding computation somehow provides the
 invariants you want).
 
+Now that I think about it, this really doesn't belong in the core! Unchecked
+*inputs* do, but I think it will be best to start with pure circuits (or
+anything that can be represented as a pure circuit). The core can be used as
+glue in other components of a language - we could even have unchecked calls in
+this very compiler, in fact. It would just be a separate thing from the circuit
+core. Doing it that way *does* mean that we need to have good coordination
+between the core representation of circuits and the other parts of the
+language(s) relying on this, but would be true regardless.
+
+(I may reconsider that decision if I find there is a good way of generating a
+proof for the execution of a pure circuit without keeping the transcript around.
+That does exist with folding schemes, but like I said, even those ultimately
+seem to need a bootstrap non-folding proof system as glue.)
+
 ## Why restrict ourselves to such a simple core?
 
 Branchless arithmetic is the easiest kind of computation to make
