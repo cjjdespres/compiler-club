@@ -13,6 +13,16 @@ point of view of actual circuit execution - circuits are after all just a
 computer program built out of a bunch of field arithmetic and binding
 intermediate results to variables.
 
+N.B. "non-deterministic" just means "an exact value for this variable does not
+appear in the final proof". For the circuit above, the proof that gets generated
+for the computation `y = circuit(x, w)` would say "for the given `x` and `y`
+there exists a `w` such that `y = circuit(x, w)`". You as the person requesting
+that `circuit` be executed would supply an `x` and receive a `(y, proof)` back,
+with `proof` being some checkable representation of that statement. You can
+suggest to the executor ways of finding the value `w` (and end up doing that in
+real protocols), but they're not obliged to take your advice. It's up to you to
+structure the circuit so they can't cheat you!
+
 Proof systems generally take a different view. Rather than specify *how* to
 compute the variables in a program, the circuit specifies the *relationships*
 that the intermediate results in a circuit must have with each other in order to
@@ -40,7 +50,7 @@ Putting it all together, you might think of these programs as having this kind
 of interface at *runtime*
 
 ```rust
-fn circuit(detInput: [Field; M], auxInput: AuxIn, transcript: &mut [Field; N]) -> AuxOut
+fn circuit(detInput: [Field; M], auxInput: AuxIn, transcript: &mut [Field; TSize]) -> AuxOut
 ```
 
 This circuit takes in the deterministic inputs `detInput` that have already been
@@ -55,7 +65,7 @@ transcript. There are many options.)
 At compile time, the circuit needs to have something like this interface:
 
 ```rust
-fn circuit(inputs: [CircuitVar, M], freshVarSource: VS) -> (Vec<Constraint>, VS)
+fn circuit(inputs: [CircuitVar; ISize], freshVarSource: VS) -> (Vec<Constraint>, VS)
 ```
 
 The circuit takes in symbolic variables for its inputs, and a source of fresh
